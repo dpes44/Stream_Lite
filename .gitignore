@@ -1,0 +1,45 @@
+# Runtime caches and generated media
+.stream_lite_cache/
+__pycache__/
+*.py[cod]
+
+# Local environment and machine-specific config
+.env
+.env.*
+media.config.local.json
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Large local media files
+*.3gp
+*.avi
+*.flv
+*.m2ts
+*.m4v
+*.mkv
+*.mov
+*.mp4
+*.mpeg
+*.mpg
+*.ogm
+*.ogv
+*.vob
+*.webm
+*.wmv
+
+# Generated HLS fragments outside the app cache
+*.m3u8
+segment_*.ts
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/

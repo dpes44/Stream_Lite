@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Stream Lite</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="top-bar">
+        <div>
+          <p class="eyebrow">Local Media Server</p>
+          <h1>Stream Lite</h1>
+        </div>
+        <div class="top-actions">
+          <span id="libraryCount" class="count-pill">0 videos</span>
+          <button id="rescanButton" type="button">Rescan</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="player-panel" aria-label="Player">
+          <div class="video-frame">
+            <video id="videoPlayer" controls playsinline preload="metadata"></video>
+            <div id="playerOverlay" class="player-overlay">
+              <p>Choose a movie</p>
+            </div>
+          </div>
+          <div class="now-playing">
+            <div>
+              <p class="eyebrow">Now Playing</p>
+              <h2 id="currentTitle">Nothing selected</h2>
+            </div>
+            <div class="playback-meta">
+              <span id="playbackMode">Idle</span>
+              <button id="stopStreamButton" type="button" disabled>Stop stream</button>
+            </div>
+          </div>
+          <p id="statusText" class="status-text">Ready.</p>
+        </section>
+
+        <section class="library-panel" aria-label="Library">
+          <div class="toolbar">
+            <label class="field">
+              <span>Search</span>
+              <input id="searchInput" type="search" placeholder="Movie, folder, extension">
+            </label>
+            <label class="field">
+              <span>Jump to folder</span>
+              <select id="folderFilter">
+                <option value="">All folders</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Sort</span>
+              <select id="sortSelect">
+                <option value="title">Title</option>
+                <option value="modified">Recently added</option>
+                <option value="size">Largest</option>
+                <option value="folder">Folder</option>
+              </select>
+            </label>
+          </div>
+
+          <div id="emptyState" class="empty-state" hidden>
+            No videos found. Update <code>media.config.json</code> with your movie folder and rescan.
+          </div>
+          <div class="library-nav">
+            <button id="backButton" type="button" hidden>Back to folders</button>
+            <div>
+              <p class="eyebrow">Browse</p>
+              <h2 id="viewTitle">Folders</h2>
+              <p id="viewSubtitle">Series folders stay grouped here.</p>
+            </div>
+          </div>
+          <div id="movieGrid" class="movie-grid"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="vendor/hls.min.js"></script>
+    <script src="script.js"></script>
+  </body>
+</html>

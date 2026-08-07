@@ -1,0 +1,18 @@
+{
+  "libraryPaths": [
+    "./videos"
+  ],
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080
+  },
+  "transcoding": {
+    "enabled": true,
+    "maxSessions": 4,
+    "maxHeight": 720,
+    "crf": 23,
+    "preset": "veryfast",
+    "audioBitrate": "160k",
+    "idleTimeoutSeconds": 900
+  }
+}
