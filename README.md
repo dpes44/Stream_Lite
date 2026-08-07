@@ -43,6 +43,39 @@ From a phone or TV on the same Wi-Fi, use this computer's LAN IP:
 http://YOUR_COMPUTER_IP:8080/
 ```
 
+## Windows Setup
+
+On Windows, use drive paths with forward slashes:
+
+```json
+{
+  "libraryPaths": [
+    "E:/Movies",
+    "F:/Series"
+  ]
+}
+```
+
+Playback for MKV, AVI, WMV, and many audio codecs requires FFmpeg. In PowerShell,
+check:
+
+```powershell
+ffmpeg -version
+ffprobe -version
+```
+
+If either command is not found, install FFmpeg and add its `bin` folder to PATH,
+or set the full paths in `media.config.json`:
+
+```json
+{
+  "tools": {
+    "ffmpeg": "C:/ffmpeg/bin/ffmpeg.exe",
+    "ffprobe": "C:/ffmpeg/bin/ffprobe.exe"
+  }
+}
+```
+
 ## Playback Notes
 
 - MP4/WebM files with browser-compatible codecs play directly.

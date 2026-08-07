@@ -57,6 +57,10 @@ MIME_TYPES = {
 DEFAULT_CONFIG = {
     "libraryPaths": ["./videos"],
     "server": {"host": "0.0.0.0", "port": 8080},
+    "tools": {
+        "ffmpeg": "ffmpeg",
+        "ffprobe": "ffprobe",
+    },
     "thumbnails": {
         "enabled": False,
     },
@@ -212,12 +216,41 @@ def public_scan_errors() -> list[str]:
         return list(SCAN_ERRORS)
 
 
+def configured_tool(name: str) -> str:
+    return str(CONFIG.get("tools", {}).get(name, name))
+
+
+def resolve_tool(name: str) -> str | None:
+    configured = configured_tool(name)
+    found = shutil.which(configured)
+    if found:
+        return found
+
+    path = Path(configured)
+    if path.exists():
+        return str(path)
+
+    return None
+
+
+def require_tool(name: str) -> str:
+    tool = resolve_tool(name)
+    if tool:
+        return tool
+
+    install_hint = (
+        "Install FFmpeg and make sure ffmpeg.exe and ffprobe.exe are available in PATH, "
+        "or set their full paths in media.config.json."
+    )
+    raise HttpError(HTTPStatus.SERVICE_UNAVAILABLE, f"{name} was not found. {install_hint}")
+
+
 def probe_media(item: dict) -> dict:
     if item.get("probe"):
         return item["probe"]
 
     command = [
-        "ffprobe",
+        require_tool("ffprobe"),
         "-v",
         "error",
         "-show_entries",
@@ -229,6 +262,8 @@ def probe_media(item: dict) -> dict:
     try:
         completed = subprocess.run(command, capture_output=True, text=True, timeout=25, check=True)
         probe = json.loads(completed.stdout or "{}")
+    except HttpError:
+        raise
     except Exception as error:
         probe = {"error": str(error), "streams": [], "format": {}}
 
@@ -244,6 +279,9 @@ def first_stream(probe: dict, codec_type: str) -> dict | None:
 
 
 def direct_playable(item: dict) -> bool:
+    if not resolve_tool("ffprobe"):
+        return item["extension"] in {".mp4", ".m4v", ".mov", ".webm", ".ogg", ".ogv"}
+
     probe = probe_media(item)
     video = first_stream(probe, "video")
     audio = first_stream(probe, "audio")
@@ -314,10 +352,11 @@ def ensure_transcode(item: dict) -> dict:
 
         playlist = output_dir / "stream.m3u8"
         log_path = output_dir / "ffmpeg.log"
+        ffmpeg = require_tool("ffmpeg")
         max_height = int(CONFIG["transcoding"].get("maxHeight", 720))
         vf_filter = f"scale=-2:min({max_height}\\,ih)"
         args = [
-            "ffmpeg",
+            ffmpeg,
             "-hide_banner",
             "-loglevel",
             "warning",
@@ -431,11 +470,15 @@ def cleanup_transcodes() -> None:
 
 
 def generate_thumbnail(item: dict, output_path: Path) -> bool:
+    ffmpeg = resolve_tool("ffmpeg")
+    if not ffmpeg:
+        return False
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     attempts = ["00:01:00", "00:00:05", "00:00:01"]
     for timestamp in attempts:
         command = [
-            "ffmpeg",
+            ffmpeg,
             "-hide_banner",
             "-loglevel",
             "error",
@@ -729,6 +772,9 @@ def main() -> None:
     print(f"Stream Lite is running at http://127.0.0.1:{port}/")
     print("Use media.config.json to point libraryPaths at your external drive.")
     print(f"Loaded {len(LIBRARY)} videos.")
+    for tool_name in ("ffmpeg", "ffprobe"):
+        if not resolve_tool(tool_name):
+            print(f"Tool warning: {tool_name} was not found. Transcoding may not work.")
     for error in public_scan_errors():
         print(f"Scan warning: {error}")
     try:

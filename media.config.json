@@ -7,6 +7,10 @@
     "host": "0.0.0.0",
     "port": 8080
   },
+  "tools": {
+    "ffmpeg": "ffmpeg",
+    "ffprobe": "ffprobe"
+  },
   "thumbnails": {
     "enabled": false
   },
