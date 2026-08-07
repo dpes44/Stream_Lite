@@ -25,6 +25,11 @@
   const playbackMode = document.querySelector("#playbackMode");
   const statusText = document.querySelector("#statusText");
 
+  video.addEventListener("error", () => {
+    playbackMode.textContent = "Error";
+    setStatus("Playback failed. Check that the drive is connected and readable.");
+  });
+
   searchInput.addEventListener("input", (event) => {
     state.query = event.target.value.trim().toLowerCase();
     renderLibrary();
@@ -58,7 +63,7 @@
       }
       buildFolderFilter();
       renderLibrary();
-      setStatus(`Found ${state.items.length} videos.`);
+      setLibraryStatus(data);
     } catch (error) {
       setStatus(error.message || "Scan failed.");
     } finally {
@@ -97,7 +102,7 @@
     state.items = data.items || [];
     buildFolderFilter();
     renderLibrary();
-    setStatus(`Ready. ${state.items.length} videos loaded.`);
+    setLibraryStatus(data);
   }
 
   function buildFolderFilter() {
@@ -348,11 +353,7 @@
     }
 
     try {
-      const response = await fetch(`/api/media/${id}/playback`);
-      const playback = await response.json();
-      if (!response.ok) {
-        throw new Error(playback.error || "Playback failed");
-      }
+      const playback = await requestPlayback(id);
 
       if (playback.mode === "direct") {
         video.src = playback.url;
@@ -373,6 +374,29 @@
       playbackMode.textContent = "Error";
       setStatus(error.message || "Could not start playback.");
     }
+  }
+
+  async function requestPlayback(id) {
+    const maxAttempts = 10;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const response = await fetch(`/api/media/${id}/playback`);
+      const playback = await response.json();
+
+      if (response.ok) {
+        return playback;
+      }
+
+      if (response.status === 202 && attempt < maxAttempts) {
+        playbackMode.textContent = "Preparing";
+        setStatus(`Preparing transcode stream... ${attempt}/${maxAttempts}`);
+        await sleep(1500);
+        continue;
+      }
+
+      throw new Error(playback.error || "Playback failed");
+    }
+
+    throw new Error("Playback failed");
   }
 
   function attachHls(url) {
@@ -397,6 +421,21 @@
 
   function setStatus(message) {
     statusText.textContent = message;
+  }
+
+  function setLibraryStatus(data) {
+    const errors = data.errors || [];
+    if (errors.length > 0) {
+      setStatus(`Loaded ${state.items.length} videos. Scan warning: ${errors[0]}`);
+      return;
+    }
+    setStatus(`Ready. ${state.items.length} videos loaded.`);
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => {
+      window.setTimeout(resolve, ms);
+    });
   }
 
   function formatBytes(bytes) {

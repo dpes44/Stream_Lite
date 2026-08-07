@@ -57,6 +57,9 @@ MIME_TYPES = {
 DEFAULT_CONFIG = {
     "libraryPaths": ["./videos"],
     "server": {"host": "0.0.0.0", "port": 8080},
+    "thumbnails": {
+        "enabled": False,
+    },
     "transcoding": {
         "enabled": True,
         "maxSessions": 4,
@@ -72,6 +75,7 @@ CONFIG: dict = {}
 LIBRARY: list[dict] = []
 MEDIA_BY_ID: dict[str, dict] = {}
 TRANSCODES: dict[str, dict] = {}
+SCAN_ERRORS: list[str] = []
 STATE_LOCK = threading.RLock()
 
 
@@ -121,12 +125,29 @@ def clean_title(stem: str) -> str:
 
 def scan_library() -> None:
     items: list[dict] = []
+    scan_errors: list[str] = []
     for raw_root in CONFIG.get("libraryPaths", []):
         root_path = resolve_library_path(raw_root)
-        if not root_path.exists():
+        try:
+            root_path.stat()
+        except FileNotFoundError:
+            scan_errors.append(f"{root_path}: path does not exist")
+            continue
+        except PermissionError:
+            scan_errors.append(f"{root_path}: permission denied")
+            continue
+        except OSError as error:
+            scan_errors.append(f"{root_path}: {error.strerror or error}")
             continue
 
-        for current_root, dirnames, filenames in os.walk(root_path):
+        if not root_path.is_dir():
+            scan_errors.append(f"{root_path}: not a folder")
+            continue
+
+        def on_walk_error(error: OSError) -> None:
+            scan_errors.append(f"{error.filename}: {error.strerror or error}")
+
+        for current_root, dirnames, filenames in os.walk(root_path, onerror=on_walk_error):
             dirnames[:] = [
                 name
                 for name in dirnames
@@ -169,6 +190,7 @@ def scan_library() -> None:
         LIBRARY[:] = items
         MEDIA_BY_ID.clear()
         MEDIA_BY_ID.update({item["id"]: item for item in items})
+        SCAN_ERRORS[:] = scan_errors
 
 
 def public_media(item: dict) -> dict:
@@ -183,6 +205,11 @@ def public_media(item: dict) -> dict:
         "modified": item["modified"],
         "thumbnailUrl": f"/api/media/{item['id']}/thumb.jpg",
     }
+
+
+def public_scan_errors() -> list[str]:
+    with STATE_LOCK:
+        return list(SCAN_ERRORS)
 
 
 def probe_media(item: dict) -> dict:
@@ -235,6 +262,27 @@ def direct_playable(item: dict) -> bool:
     if extension in {".ogg", ".ogv"}:
         return video_codec in {"theora", "vp8"} and has_browser_audio
     return False
+
+
+def validate_media_access(item: dict) -> None:
+    file_path = Path(item["path"])
+    try:
+        if not file_path.exists():
+            raise HttpError(HTTPStatus.NOT_FOUND, "File is no longer available. Rescan the library.")
+        with file_path.open("rb") as handle:
+            handle.read(1)
+    except HttpError:
+        raise
+    except PermissionError:
+        raise HttpError(
+            HTTPStatus.FORBIDDEN,
+            f"No permission to read {file_path}. Remount the drive for the dpes user.",
+        )
+    except OSError as error:
+        raise HttpError(
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            f"Could not read {file_path}: {error.strerror or error}. Check the drive connection.",
+        )
 
 
 def active_transcode_count() -> int:
@@ -457,7 +505,13 @@ class StreamLiteHandler(BaseHTTPRequestHandler):
                 self.serve_file(ROOT / path.lstrip("/"), None, head_only)
                 return
             if path == "/api/library":
-                self.send_json({"items": [public_media(item) for item in LIBRARY], "count": len(LIBRARY)})
+                self.send_json(
+                    {
+                        "items": [public_media(item) for item in LIBRARY],
+                        "count": len(LIBRARY),
+                        "errors": public_scan_errors(),
+                    }
+                )
                 return
             if path.startswith("/api/media/"):
                 self.handle_media(path, head_only)
@@ -476,7 +530,13 @@ class StreamLiteHandler(BaseHTTPRequestHandler):
         try:
             if path == "/api/rescan":
                 scan_library()
-                self.send_json({"items": [public_media(item) for item in LIBRARY], "count": len(LIBRARY)})
+                self.send_json(
+                    {
+                        "items": [public_media(item) for item in LIBRARY],
+                        "count": len(LIBRARY),
+                        "errors": public_scan_errors(),
+                    }
+                )
                 return
             if path.startswith("/api/media/") and path.endswith("/stop"):
                 media_id = path.strip("/").split("/")[2]
@@ -499,18 +559,20 @@ class StreamLiteHandler(BaseHTTPRequestHandler):
 
         action = parts[3] if len(parts) >= 4 else ""
         if action == "direct":
+            validate_media_access(item)
             self.serve_file(Path(item["path"]), guess_mime(Path(item["path"])), head_only)
             return
         if action == "thumb.jpg":
             thumb_path = THUMB_ROOT / f"{media_id}.jpg"
-            if not thumb_path.exists():
+            if not thumb_path.exists() and CONFIG.get("thumbnails", {}).get("enabled", False):
                 generate_thumbnail(item, thumb_path)
             if thumb_path.exists():
                 self.serve_file(thumb_path, "image/jpeg", head_only)
             else:
-                self.send_error(HTTPStatus.NOT_FOUND, "Thumbnail not available")
+                self.send_placeholder_thumbnail(item["title"])
             return
         if action == "playback":
+            validate_media_access(item)
             if direct_playable(item):
                 self.send_json(
                     {
@@ -555,6 +617,27 @@ class StreamLiteHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_placeholder_thumbnail(self, title: str) -> None:
+        initials = "".join(word[0] for word in re.findall(r"[A-Za-z0-9]+", title)[:2]).upper() or "SL"
+        body = f"""<svg xmlns="http://www.w3.org/2000/svg" width="520" height="292" viewBox="0 0 520 292">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ef4b35"/>
+      <stop offset="1" stop-color="#31c2a0"/>
+    </linearGradient>
+  </defs>
+  <rect width="520" height="292" fill="#101219"/>
+  <rect width="520" height="292" fill="url(#bg)" opacity="0.32"/>
+  <circle cx="260" cy="146" r="54" fill="#050608" opacity="0.6"/>
+  <text x="260" y="160" fill="#f4f0e8" font-family="Arial, sans-serif" font-size="40" font-weight="700" text-anchor="middle">{initials}</text>
+</svg>""".encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "image/svg+xml")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "public, max-age=86400")
+        self.end_headers()
+        self.wfile.write(body)
+
     def serve_file(
         self,
         file_path: Path,
@@ -562,11 +645,22 @@ class StreamLiteHandler(BaseHTTPRequestHandler):
         head_only: bool,
         no_cache: bool = False,
     ) -> None:
-        if not file_path.exists() or not file_path.is_file():
+        try:
+            if not file_path.exists() or not file_path.is_file():
+                self.send_error(HTTPStatus.NOT_FOUND, "File not found")
+                return
+            size = file_path.stat().st_size
+        except PermissionError:
+            self.send_error(HTTPStatus.FORBIDDEN, "Permission denied")
+            return
+        except OSError as error:
+            self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, error.strerror or str(error))
+            return
+
+        if size <= 0:
             self.send_error(HTTPStatus.NOT_FOUND, "File not found")
             return
 
-        size = file_path.stat().st_size
         content_type = content_type or guess_mime(file_path)
         range_value = self.headers.get("Range")
         byte_range = parse_range(range_value, size) if range_value else None
@@ -598,15 +692,20 @@ class StreamLiteHandler(BaseHTTPRequestHandler):
         if head_only:
             return
 
-        with file_path.open("rb") as handle:
-            handle.seek(start)
-            remaining = length
-            while remaining > 0:
-                chunk = handle.read(min(1024 * 1024, remaining))
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
-                remaining -= len(chunk)
+        try:
+            with file_path.open("rb") as handle:
+                handle.seek(start)
+                remaining = length
+                while remaining > 0:
+                    chunk = handle.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        except OSError as error:
+            print(f"Read failed for {file_path}: {error.strerror or error}")
 
 
 def guess_mime(file_path: Path) -> str:
@@ -630,6 +729,8 @@ def main() -> None:
     print(f"Stream Lite is running at http://127.0.0.1:{port}/")
     print("Use media.config.json to point libraryPaths at your external drive.")
     print(f"Loaded {len(LIBRARY)} videos.")
+    for error in public_scan_errors():
+        print(f"Scan warning: {error}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

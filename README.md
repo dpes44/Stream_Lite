@@ -50,3 +50,26 @@ http://YOUR_COMPUTER_IP:8080/
 - Up to 4 transcode sessions are allowed by default in `media.config.json`.
 - iPhone/Safari can play HLS directly. Chrome-based browsers use the local
   `vendor/hls.min.js` copy included with this app.
+
+## Drive Troubleshooting
+
+If videos hang or fail with an input/output error, check that the drive is still
+mounted and readable:
+
+```bash
+lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS
+ls -la /media/dpes/dpes
+```
+
+If the drive is not mounted, unplug/replug the dock or mount it from the Files
+app. If it mounts as `root` and the app cannot read it, remount it for your user:
+
+```bash
+udisksctl mount -b /dev/sdb2
+```
+
+Then restart the app with:
+
+```bash
+python3 app.py
+```
